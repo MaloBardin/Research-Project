@@ -1,0 +1,142 @@
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb}
+\usepackage{enumitem}
+
+\title{An Essay on How to Implement Views in the Black--Litterman Formula}
+\author{Malo Bardin}
+\date{October 2025}
+
+\begin{document}
+\maketitle
+
+\section{The formulas}
+
+Let's first introduce how we can encode the views in the Black--Litterman model:
+\[
+P\,\mu \;=\; Q \;+\; \varepsilon,
+\qquad \varepsilon \sim \mathcal{N}\!\left(0,\;\Omega\right).
+\]
+
+\noindent
+where:
+\begin{itemize}[leftmargin=2em]
+  \item $\mathbf{q}$ is the vector of view-implied excess returns,
+  \item $\mathbf{P}$ is the pick matrix (asset weights per view),
+  \item $\boldsymbol{\pi}$ is the (unknown) equilibrium excess return vector,
+  \item $\boldsymbol{\varepsilon}$ is a normally distributed error term, and
+  \item $\boldsymbol{\Omega}$ is the symmetric covariance matrix of the view errors.
+\end{itemize}
+
+\noindent
+With $\boldsymbol{\Omega}$ equal to:
+\[
+  \boldsymbol{\Omega} = \left( \frac{1}{c} - 1 \right) \mathbf{P} \boldsymbol{\Sigma} \mathbf{P}^{T}
+\]
+
+\noindent
+where:
+\begin{itemize}[leftmargin=2em]
+  \item $\boldsymbol{\Sigma}$ is the covariance matrix to be determined,
+  \item and $c$ is a constant that we need to determine.
+\end{itemize}
+
+
+
+Le calcul de la matrice Q va s'effectuer de plusieurs manières :
+
+Q calculé par l'esperance du spread sur 1 ans avec 12 recompo de portefeuille lookback 3 mois et 1 mois de hold.
+
+
+
+I) The Black and Litterman Model, a short introduction
+
+
+
+
+
+
+II) Computing the model
+
+
+We will have two types of view to compute : market implied returns and investissors views.
+
+For the market view, will strat from this equation given by Markowitz optimization framework :
+
+
+\[
+U = w^T \hat{\mu} - \frac{\lambda}{2} w^T \Sigma w
+\]
+
+With  :
+
+$U$: The quadratic utility function used to measure portfolio performance
+
+$w$: The market capitalisation weight of assets
+
+$\hat{\mu}$: The implied excess equilibrium return vector
+
+$\lambda$: The risk aversion parameter
+
+$\Sigma$: The covariance matrix of excess returns on assets.
+
+We want to maximise the Utility function (equation 1) to have the implied return given at a $\lambda$ state. We will define later on how to define $\lambda$.
+
+\[
+\max_{w} U = w^T \hat{\mu} - \frac{\lambda}{2} w^T \Sigma w
+\]
+
+Using basic derivation skill we can find  :
+
+\[
+\hat{\mu} = \lambda \Sigma w
+\]
+
+We can estimate $\lambda$ by
+
+\[
+\lambda = \frac{(r - r_f)}{\sigma^2}
+\]
+
+$r$: Total return on the market portfolio, $r = w^T P_e + r_f$
+
+$r_f$: Risk free rate
+
+$\sigma^2$: Variance of the market portfolio
+
+I will take $\lambda$ = 0.5 according to literature.
+
+
+\[
+\mu = \hat{\mu} + \varepsilon \quad \text{with} \quad \varepsilon \sim \mathcal{N}(0, \tau \Sigma).
+\]
+
+
+%make it title
+\section{We now have the market implied return, we can compute the investors views}
+
+oetit test
+
+Black and Litterman specify expected returns as follows:
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+\end{document}
