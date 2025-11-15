@@ -4,7 +4,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import plotly.express as px
 from fredapi import Fred
-
+import warnings
+warnings.filterwarnings("ignore")
 
 #%%
 df = pd.read_csv("data.csv", sep=";", decimal=",")
@@ -134,7 +135,7 @@ def GetRiskFree(df,date,lookback,RfDf):
     #print(positionOfStartDate)
     startDate=pd.to_datetime(df.iloc[positionOfStartDate,0])
     endDate=pd.to_datetime(date)
-    RfDf = RfDf.loc[(RfDf.index >= startDate) & (RfDf.index <= endDate)].copy()
+    RfDf=RfDf[(RfDf.index >= startDate) & (RfDf.index <= endDate )].copy()
     CumulativeRf=[]
 
     for i in range(len(RfDf)):
@@ -143,15 +144,12 @@ def GetRiskFree(df,date,lookback,RfDf):
       else:
         CumulativeRf.append(pow((1+RfDf["Rf"].iloc[i]),(RfDf["Count"].iloc[i]/360))*CumulativeRf[i-1])
 
-    RfDf.loc[:, "CumulativeRf"] = CumulativeRf
-    RfDf.loc[:, "CumulativeRf"] = RfDf["CumulativeRf"] - 1
+    RfDf["CumulativeRf"]=CumulativeRf
+    RfDf["CumulativeRf"]= RfDf["CumulativeRf"]-1
 
     return RfDf["CumulativeRf"].iloc[-1]
 
 RfDf=GetRfDataframe(df)
-#%%
-#RiskFree=GetRiskFree(df,"2016-05-11",lookback=1800,RfDf=RfDf)
-
 #%%
 def GetWeight(df,date):
     #for the moment we will use the equal weight
@@ -163,68 +161,81 @@ def GetWeight(df,date):
 #Weight=GetWeight(df,"2020-05-11")
 
 #%%
-def GetLambda(df,date,lookback):
-    returns=GetReturn(df,date,lookback)
-    returns=returns+1
-
-    avg_return=returns.prod()-1 #geometric days return
+def GetLambda(df,date,timeofcalculation,RfDf):
+    returns=GetReturn(df,date,timeofcalculation)
     weight_vector=GetWeight(df=0,date=0)
-    Sigma=GetSigma(df,date,lookback)
-    var = float((weight_vector.T @ Sigma.values @ weight_vector).item())
-    lambda_value=(avg_return@weight_vector - GetRiskFree(df,date,lookback))/np.sqrt(var)
+
+    mean_return=np.mean(np.dot(returns,weight_vector))
+    mean_annual=(1+mean_return)**252-1
+
+
+    rf_temps=GetRiskFree(df,date,timeofcalculation,RfDf)
+    rf_annual=(1+rf_temps)**(252/timeofcalculation)-1
+
+
+    Sigma=GetSigma(df,date,timeofcalculation)
+    Sigma_annual=252*Sigma
+    var = float((weight_vector.T @ Sigma_annual.values @ weight_vector).item())
+    print(var)
+    lambda_value=(mean_annual - rf_annual)/var
+
+
+    excess = mean_annual - rf_annual
+    sigma2 = var
+    sigma  = np.sqrt(var)
+    lam    = excess / sigma2
+    sharpe = excess / sigma
+    print("Excess:", excess, " Var:", sigma2, " Vol:", sigma, " λ:", lam, " Sharpe:", sharpe)
+
     return lambda_value
 
 
-#Lambda=GetLambda(df,"2016-05-11",lookback=1800)
+
+Lambda=GetLambda(df,"2024-01-11",timeofcalculation=3500,RfDf=RfDf)
 #%%
-def GetPMatrix(df,date, lookback,longonly=False,proportion=3,offset=3):
+def GetPMatrix(df,date, lookback,proportion=3):
     #(date)
     #print(proportion)
     #print(lookback)
     AssetColumns=["S5SFTW","S5PHRM","S5CPGS","S5ENRSX","S5FDBT","S5TECH","S5RETL","S5BANKX","S5HCES","S5DIVF","S5UTILX","S5MEDA","S5REAL","S5TELSX","S5MATRX","S5INSU","S5FDSR","S5HOUS","S5SSEQX","S5TRAN","S5HOTR","S5CODU","S5AUCO","S5COMS"]
     bestperformer = []
-    worstperformer = []
     performerc = []
     returnBestPerformer=[]
     returnWorstPerformer=[]
+
     endDateIndex=df.index[df["Date"]==pd.to_datetime(date)][0]
     startDateIndex=df.index[df["Date"]==pd.to_datetime(date)][0]-lookback
 
-    for i in range(1, df.shape[1]):  #loop through asset columns
-        performerc.append((((float(df.iloc[endDateIndex, i]) / float(df.iloc[startDateIndex, i]) - 1) * 100), i - 1))
+    for i in range(2, df.shape[1]):  #loop through asset columns
+        performerc.append((((float(df.iloc[endDateIndex, i]) / float(df.iloc[startDateIndex, i]) - 1) * 100), i - 2,df.columns[i])) #pos of best stock in a tuple with its return
 
     performerc.sort(reverse=True)
+    #print(performerc)
+    perfMarket= (float(df.iloc[endDateIndex, 1]) / float(df.iloc[startDateIndex, 1]) - 1) * 100
+    #print(f"Market performance over the period : {perfMarket}%")
+
+
+
+
     for i in range(proportion):
         bestperformer.append(performerc[i][1])
         returnBestPerformer.append(performerc[i][0])
 
 
     P=np.zeros((proportion,24))
-
+    Q=np.zeros((proportion,1))
     for lineview in range(proportion):
         for i in range(len(AssetColumns)):
             P[lineview,i]=-1/len(AssetColumns)
         P[lineview,bestperformer[lineview]]=1-1/len(AssetColumns)
 
-    for i in range(len(AssetColumns)):
-        P[0,i]=-1/(24)
+    for i in range(proportion):
+        Q[i,0]=((returnBestPerformer[i]-perfMarket)/2)/100
 
-    for i in range(len(AssetColumns)):
-        if i in bestperformer:
-            P[0,i]=1/proportion
-
-
-
-    if len(returnWorstPerformer)==0:
-        returnWorstPerformer.append(0)
-
-    spreadLoosersWinnners=np.mean(returnBestPerformer)-np.mean(returnWorstPerformer)
-    Q=np.array([[spreadLoosersWinnners/100]]) #convert to decimal
+    #print("P : ",P,"Q : ",Q)
 
     return P, Q
-PMatrix,TempoQ=GetPMatrix(df,"2016-05-11",lookback=180,longonly=True,proportion=3,offset=0)
-#%%
-PMatrix
+PMatrix,TempoQ=GetPMatrix(df,"2016-05-11",lookback=180,proportion=3)
 #%%
 def GetOmega(PMatrix, Sigma, c=0.99):
     #Omega is the uncertainty of the views
@@ -245,16 +256,14 @@ def BlackAndLittermanModel(backtestStartDate, rebalancingFrequency, lookbackPeri
     taux=0.01
 
     Sigma=GetSigma(df,backtestStartDate,lookback=lookbackPeriod)
-    #Lambda=GetLambda(df,backtestStartDate,lookbackPeriod)
     Lambda=3
-    PMatrix,Q= GetPMatrix(df,backtestStartDate, lookback=lookbackPeriod,longonly=True,proportion=3,offset=0)
+    PMatrix,Q= GetPMatrix(df,backtestStartDate, lookback=lookbackPeriod,proportion=3)
     Omega=GetOmega(PMatrix, Sigma, c=0.1)
     rf=GetRiskFree(df,backtestStartDate,lookbackPeriod,RfDf)
     weights = GetWeight(df, backtestStartDate)
     weights = np.array(weights).reshape(-1, 1)
     uimplied = Lambda * (Sigma @ weights) + rf
     #BL formula
-    Lambda=3
 
 
 
@@ -266,17 +275,15 @@ def BlackAndLittermanModel(backtestStartDate, rebalancingFrequency, lookbackPeri
 
 
     #MarkowitzAllocation
-
     WeightBL=np.linalg.inv(Sigma)@(optimizedReturn-rf)/Lambda
+
+    if not np.isclose(float(np.sum(WeightBL)), 1.0, atol=1e-6):
+        raise ValueError("Weights do not sum to 1, please investigate.")
 
     return WeightBL
 
 
-BlackAndLittermanModel("2016-05-11", rebalancingFrequency=3, lookbackPeriod=180, df=df,RfDf=RfDf)
-
-
-
-
+BlackAndLittermanModel("2018-05-11", rebalancingFrequency=3, lookbackPeriod=180, df=df,RfDf=RfDf)
 
 #%%
 from rich.console import Console
@@ -294,7 +301,6 @@ df_length = dfbacktest.shape[1] - 2  # bcs of date and spx
 last_rebalance = dfbacktest.loc[0, "Date"]  # première date
 month_count = 0
 
-# 🎨 AFFICHAGE STYLÉ (sans prompts)
 hold = 1
 hist = 0
 proportion = 3
@@ -311,10 +317,15 @@ console.print(f"   • Historique: [cyan]{hist}[/cyan] mois")
 console.print(f"   • Proportion: [cyan]{proportion}[/cyan]")
 console.print("\n[yellow]⏳ Lancement du backtest...[/yellow]\n")
 
+
+
+
+
+
+
 def Backtester(df,hold, hist, proportion,df_toBL, RfDf):
     #new dataframe for stock quantity
-    Indexcolumns = ["Date","SPX","S5SFTW","S5PHRM","S5CPGS","S5ENRSX","S5FDBT","S5TECH","S5RETL","S5BANKX","S5HCES","S5DIVF","S5UTILX","S5MEDA","S5REAL","S5TELSX","S5MATRX","S5INSU","S5FDSR","S5HOUS","S5SSEQX","S5TRAN","S5HOTR","S5CODU","S5AUCO","S5COMS","Money"]
-    Tickercolumns=["S5SFTW","S5PHRM","S5CPGS","S5ENRSX","S5FDBT","S5TECH","S5RETL","S5BANKX","S5HCES","S5DIVF","S5UTILX","S5MEDA","S5REAL","S5TELSX","S5MATRX","S5INSU","S5FDSR","S5HOUS","S5SSEQX","S5TRAN","S5HOTR","S5CODU","S5AUCO","S5COMS"]
+
     StockQty = df.copy()
     StockQty.drop(columns="MonthIndex", inplace=True)
     start=181
@@ -359,8 +370,9 @@ def Backtester(df,hold, hist, proportion,df_toBL, RfDf):
 
       GainOrLoss = 0
       for stocks in range(2, StockQty.shape[1]-1):
-          qty = StockQty.iloc[i, stocks]
-          if qty != 0.0:
+        qty = StockQty.iloc[i, stocks]
+
+        if qty != 0.0:
             price_now = df.iloc[i, stocks]
             price_prev = df.iloc[i - 1, stocks]
             GainOrLoss += qty * (price_now - price_prev)
@@ -371,23 +383,45 @@ def Backtester(df,hold, hist, proportion,df_toBL, RfDf):
 
     StockQty = StockQty.iloc[start:].reset_index(drop=True)
     return StockQty
+
+
 RfDf=GetRfDataframe(df)
 final = Backtester(dfbacktest, hold=hold, hist=hist, proportion=proportion, df_toBL=df,RfDf=RfDf)
 
 console.print("\n[green]✅ Backtest terminé avec succès ![/green]\n")
+
+
+
+
+
+
+
+
 #%%
-
 import plotly.express as px
+import pandas as pd
 
-money_norm =(final["Money"]/10000000*100)-100
-spx_norm=(final["SPX"]/final["SPX"].iloc[0]* 100)-100
+money_norm = (final["Money"]/10000000*100) - 100
+spx_norm = (final["SPX"]/final["SPX"].iloc[0]*100) - 100
 
-fix = px.line(x=final["Date"], y=[money_norm, spx_norm],labels={"value":"Évolution en %", "variable":"Série"},title="Comparaison des évolutions en %")
-fix.data[0].name = "Portfolio"
-fix.data[1].name = "SPX"
+df_plot = pd.DataFrame({
+    "Date": final["Date"],
+    "Portfolio": money_norm,
+    "SPX": spx_norm
+}).melt(id_vars="Date", var_name="Série", value_name="Évolution en %")
+
+fix = px.line(
+    df_plot,
+    x="Date",
+    y="Évolution en %",
+    color="Série",
+    color_discrete_map={"SPX": "red", "Portfolio": "green"},
+    title="Comparaison des évolutions en %"
+)
+
 fix.update_layout(hovermode="x unified")
-
 fix.show()
+
 #%%
 AnnualizedDf=final[["Date","SPX","Money"]]
 AnnualizedDf['Date'] = pd.to_datetime(AnnualizedDf['Date'])
@@ -445,13 +479,11 @@ for i in SPXAnnualized.index:
   SPXAvg.append(sumSPX/len(YearList))
   StratAVG.append(sumStrat/len(YearList))
 
-dff = pd.DataFrame({"Index": (range(len(SPXAvg))),"SPX": SPXAvg,"Strat": StratAVG})
+dff = pd.DataFrame({"Index": (range(len(SPXAvg))),"Portfolio": StratAVG,"SPX": SPXAvg})
 
 
-fig = px.line(dff, x="Index", y=["SPX","Strat"])
+fig = px.line(dff, x="Index", y=["SPX","Portfolio"], color_discrete_map={"SPX": "red","Portfolio": "green"})
 fig.show()
 
-
-#%%
 
 #%%
