@@ -74,98 +74,186 @@ def ComputeTraining(trainingDf,forwardwindow):
     working_df.to_csv("MLset.csv",index=False)
     return X_train,Y_train,X_test,Y_test
 
+def ModelComputation():
+    workkk = pd.read_csv("MLset.csv")
 
-workkk = pd.read_csv("MLset.csv")
+    X = workkk.drop(columns=["y"])
+    y = workkk["y"]
 
-X = workkk.drop(columns=["y"])
-y = workkk["y"]
+    split = 80000
 
-split = 80000
+    X_train = X.iloc[:split]
+    Y_train = y.iloc[:split]
 
-X_train = X.iloc[:split]
-Y_train = y.iloc[:split]
+    X_test  = X.iloc[split:]
+    Y_test  = y.iloc[split:]
 
-X_test  = X.iloc[split:]
-Y_test  = y.iloc[split:]
+    print("Train:", X_train.shape, Y_train.shape)
+    print("Test :", X_test.shape, Y_test.shape)
+    features_to_drop = ["Date"]
+    # TRAIN
+    Xtr = X_train.drop(columns=features_to_drop)
+    Xtr = pd.get_dummies(Xtr, columns=["Ticker"])
 
-print("Train:", X_train.shape, Y_train.shape)
-print("Test :", X_test.shape, Y_test.shape)
-features_to_drop = ["Date"]
-# TRAIN
-Xtr = X_train.drop(columns=features_to_drop)
-Xtr = pd.get_dummies(Xtr, columns=["Ticker"])
+    # TEST
+    Xte = X_test.drop(columns=features_to_drop)
+    Xte = pd.get_dummies(Xte, columns=["Ticker"])
 
-# TEST
-Xte = X_test.drop(columns=features_to_drop)
-Xte = pd.get_dummies(Xte, columns=["Ticker"])
+    # Alignement des colonnes (OBLIGATOIRE)
+    Xte = Xte.reindex(columns=Xtr.columns, fill_value=0)
 
-# Alignement des colonnes (OBLIGATOIRE)
-Xte = Xte.reindex(columns=Xtr.columns, fill_value=0)
+    # Targets
+    ytr = Y_train.astype(int)
+    yte = Y_test.astype(int)
 
-# Targets
-ytr = Y_train.astype(int)
-yte = Y_test.astype(int)
-
-print(Xtr.shape, Xte.shape)
-print(Xtr.columns.equals(Xte.columns))
-
-
-from xgboost import XGBClassifier
-
-model = XGBClassifier(
-    n_estimators=300,
-    max_depth=4,
-    learning_rate=0.05,
-    subsample=0.8,
-    colsample_bytree=0.8,
-    objective="binary:logistic",
-    eval_metric="logloss",
-    random_state=42
-)
-
-model.fit(
-    Xtr,
-    ytr,
-    eval_set=[(Xte, yte)],
-    verbose=True
-)
-
-y_pred_proba = model.predict_proba(Xte)[:, 1]
-y_pred = (y_pred_proba > 0.5).astype(int)
+    print(Xtr.shape, Xte.shape)
+    print(Xtr.columns.equals(Xte.columns))
 
 
-from sklearn.metrics import (
-    accuracy_score,
-    precision_score,
-    recall_score,
-    f1_score,
-    roc_auc_score,
-    confusion_matrix,
-    classification_report
-)
+    from xgboost import XGBClassifier
 
-print("Accuracy :", accuracy_score(yte, y_pred))
-print("Precision:", precision_score(yte, y_pred))
-print("Recall   :", recall_score(yte, y_pred))
-print("F1-score :", f1_score(yte, y_pred))
-print("ROC AUC  :", roc_auc_score(yte, y_pred_proba))
+    model = XGBClassifier(
+        n_estimators=300,
+        max_depth=4,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        objective="binary:logistic",
+        eval_metric="logloss",
+        random_state=42
+    )
 
-print("\nClassification report:\n")
-print(classification_report(yte, y_pred))
+    model.fit(
+        Xtr,
+        ytr,
+        eval_set=[(Xte, yte)],
+        verbose=True
+    )
 
-X_test_eval = X_test.copy()
-X_test_eval["proba"] = y_pred_proba
-X_test_eval["y_true"] = yte.values
+    y_pred_proba = model.predict_proba(Xte)[:, 1]
+    y_pred = (y_pred_proba > 0.5).astype(int)
 
-def precision_at_4(group):
-    top4 = group.sort_values("proba", ascending=False).head(4)
-    return top4["y_true"].mean()
 
-precision_top4 = (
-    X_test_eval
-    .groupby("Date")
-    .apply(precision_at_4)
-    .mean()
-)
+    from sklearn.metrics import (
+        accuracy_score,
+        precision_score,
+        recall_score,
+        f1_score,
+        roc_auc_score,
+        confusion_matrix,
+        classification_report
+    )
 
-print("Precision@4:", precision_top4)
+    print("Accuracy :", accuracy_score(yte, y_pred))
+    print("Precision:", precision_score(yte, y_pred))
+    print("Recall   :", recall_score(yte, y_pred))
+    print("F1-score :", f1_score(yte, y_pred))
+    print("ROC AUC  :", roc_auc_score(yte, y_pred_proba))
+
+    print("\nClassification report:\n")
+    print(classification_report(yte, y_pred))
+
+    X_test_eval = X_test.copy()
+    X_test_eval["proba"] = y_pred_proba
+    X_test_eval["y_true"] = yte.values
+
+    def precision_at_4(group):
+        top4 = group.sort_values("proba", ascending=False).head(4)
+        return top4["y_true"].mean()
+
+    precision_top4 = (
+        X_test_eval
+        .groupby("Date")
+        .apply(precision_at_4)
+        .mean()
+    )
+
+    print("Precision@4:", precision_top4)
+
+
+
+def computeBBasicMomentum(trainingDf,forwardwindow):
+
+    cols = ["Date","Ticker","ret_63d","position","y","retin21d"]
+
+    currentPD=pd.DataFrame(columns=cols)
+
+    for date in tqdm.tqdm(range(181,trainingDf.shape[0]-forwardwindow)):
+        rankingpre=[]
+        rankingpost=[]
+        currentDate = trainingDf.iloc[date]["Date"]
+        for asset in trainingDf.columns[2:]:
+            working_row=[]
+            Asset=asset
+            ret_63d= aa(trainingDf,currentDate,1,asset)
+            rankingpre.append((ret_63d,asset))
+            retin21d=aa(trainingDf,trainingDf.iloc[date+forwardwindow]["Date"],forwardwindow,asset)
+            rankingpost.append((retin21d,asset))
+
+            working_row.append({
+                "Date": currentDate,
+                "Ticker": Asset,
+                "ret_63d": ret_63d,
+                "position": np.nan,
+                "y": np.nan,
+                "retin21d": retin21d,
+            })
+
+            currentPD.loc[len(currentPD)] = working_row[0]
+
+
+        rankingpre.sort(key=lambda x: x[0], reverse=True)
+        rankingpost.sort(key=lambda x: x[0], reverse=True)
+
+        top4_assetspre = {asset for _, asset in rankingpre[:4]}
+        top4_assetspost = {asset for _, asset in rankingpost[:4]}
+
+        mask_date = currentPD["Date"] == currentDate
+        mask_top4 = currentPD["Ticker"].isin(top4_assetspre)
+        currentPD.loc[mask_date, "position"] = 0
+        currentPD.loc[mask_date & mask_top4, "position"] = 1
+
+
+        mask_date = currentPD["Date"] == currentDate
+        mask_top4 = currentPD["Ticker"].isin(top4_assetspost)
+        currentPD.loc[mask_date, "y"] = 0
+        currentPD.loc[mask_date & mask_top4, "y"] = 1
+
+
+    currentPD.to_csv("verif2.csv",index=False)
+
+
+def computeAccuracy():
+
+    workingdf=pd.read_csv("verif.csv")
+    compteurtrue=0
+    compteurerror=0
+    for i in range(workingdf.shape[0]):
+        if workingdf.iloc[i,3]==workingdf.iloc[i,4]:
+            compteurtrue+=1
+        else :
+            compteurerror+=1
+
+    print("Accuracy : ", compteurtrue/(compteurerror+compteurtrue))
+
+computeAccuracy()
+
+
+
+
+
+
+
+
+
+
+
+
+computeBBasicMomentum(getProperDf(),21)
+
+
+
+
+
+
+
