@@ -172,71 +172,64 @@ def ModelComputation():
 
 
 
-def computeBBasicMomentum(trainingDf,forwardwindow):
+import numpy as np
+import pandas as pd
+import tqdm
 
-    cols = ["Date","Ticker","ret_63d","position","y","retin21d"]
+def computeBBasicMomentum_vectorized_prices(trainingDf, forwardwindow, start=181, out_csv="verifff.csv"):
+    assets = list(trainingDf.columns[2:])
+    dates = trainingDf["Date"].to_numpy()
 
-    currentPD=pd.DataFrame(columns=cols)
+    prices = trainingDf[assets].astype(float)  # ne modifie pas trainingDf
+    ret_63 = prices.pct_change(63)                          # trailing 63j
+    fwd_ret = prices.shift(-forwardwindow) / prices - 1     # forward fw
 
-    for date in tqdm.tqdm(range(181,trainingDf.shape[0]-forwardwindow)):
-        rankingpre=[]
-        rankingpost=[]
-        currentDate = trainingDf.iloc[date]["Date"]
-        for asset in trainingDf.columns[2:]:
-            working_row=[]
-            Asset=asset
-            ret_63d= aa(trainingDf,currentDate,1,asset)
-            rankingpre.append((ret_63d,asset))
-            retin21d=aa(trainingDf,trainingDf.iloc[date+forwardwindow]["Date"],forwardwindow,asset)
-            rankingpost.append((retin21d,asset))
+    idx = np.arange(start, trainingDf.shape[0] - forwardwindow)
+    pre = ret_63.iloc[idx].to_numpy()
+    post = fwd_ret.iloc[idx].to_numpy()
 
-            working_row.append({
-                "Date": currentDate,
-                "Ticker": Asset,
-                "ret_63d": ret_63d,
-                "position": np.nan,
-                "y": np.nan,
-                "retin21d": retin21d,
-            })
+    n_dates = len(idx)
+    n_assets = len(assets)
 
-            currentPD.loc[len(currentPD)] = working_row[0]
+    # indices des top4 sans trier toute la ligne
+    top4_pre = np.argpartition(-pre, 4, axis=1)[:, :4]
+    top4_post = np.argpartition(-post, 4, axis=1)[:, :4]
 
 
-        rankingpre.sort(key=lambda x: x[0], reverse=True)
-        rankingpost.sort(key=lambda x: x[0], reverse=True)
+    position = np.zeros((n_dates, n_assets), dtype=np.int8)
+    y = np.zeros((n_dates, n_assets), dtype=np.int8)
+    row = np.arange(n_dates)[:, None]
+    position[row, top4_pre] = 1
+    y[row, top4_post] = 1
 
-        top4_assetspre = {asset for _, asset in rankingpre[:4]}
-        top4_assetspost = {asset for _, asset in rankingpost[:4]}
+    out = pd.DataFrame({
+        "Date": np.repeat(dates[idx], n_assets),
+        "Ticker": np.tile(np.array(assets), n_dates),
+        "ret_63d": pre.reshape(-1),
+        "position": position.reshape(-1),
+        "y": y.reshape(-1),
+        "retin21d": post.reshape(-1),
+    })
 
-        mask_date = currentPD["Date"] == currentDate
-        mask_top4 = currentPD["Ticker"].isin(top4_assetspre)
-        currentPD.loc[mask_date, "position"] = 0
-        currentPD.loc[mask_date & mask_top4, "position"] = 1
+    out.to_csv("eee", index=False)
+    return out
 
+def quick_hit_rate(path="verifff.csv"):
+    df = pd.read_csv(path)
 
-        mask_date = currentPD["Date"] == currentDate
-        mask_top4 = currentPD["Ticker"].isin(top4_assetspost)
-        currentPD.loc[mask_date, "y"] = 0
-        currentPD.loc[mask_date & mask_top4, "y"] = 1
+    # sécurise les types
+    pos = df["position"].fillna(0).astype(int)
+    y   = df["y"].fillna(0).astype(int)
 
+    n_pred_1 = (pos == 1).sum()
+    n_hit = ((pos == 1) & (y == 1)).sum()
 
-    currentPD.to_csv("verif2.csv",index=False)
+    hit_rate = n_hit / n_pred_1 if n_pred_1 > 0 else 0.0
 
+    print(f"Pred=1: {n_pred_1} | Hits: {n_hit} | Hit rate: {hit_rate:.4%}")
+    return hit_rate
 
-def computeAccuracy():
-
-    workingdf=pd.read_csv("verif.csv")
-    compteurtrue=0
-    compteurerror=0
-    for i in range(workingdf.shape[0]):
-        if workingdf.iloc[i,3]==workingdf.iloc[i,4]:
-            compteurtrue+=1
-        else :
-            compteurerror+=1
-
-    print("Accuracy : ", compteurtrue/(compteurerror+compteurtrue))
-
-computeAccuracy()
+quick_hit_rate()
 
 
 
@@ -246,10 +239,7 @@ computeAccuracy()
 
 
 
-
-
-
-computeBBasicMomentum(getProperDf(),21)
+computeBBasicMomentum_vectorized_prices(getProperDf(),21)
 
 
 
