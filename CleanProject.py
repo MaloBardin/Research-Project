@@ -7,7 +7,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
-df = pd.read_csv("data.csv", sep=";", decimal=",")
+df = pd.read_csv("ML csv/data.csv", sep=";", decimal=",")
 df = df.rename(columns={
     "Column1": "Date",
     "Column2": "SPX",

@@ -1,16 +1,5 @@
-import numpy as np
-import pandas as pd
-from Grabber import getProperDf
 from Residual import GetWhatToBuy
 from Returns import aa
-import tqdm
-
-
-def CreateMLSets(df,proportion):
-    split=int(df.shape[0]*proportion)
-    trainingDf=df.iloc[:split,:]
-    testingDf=df.iloc[split:,:]
-    return trainingDf,testingDf
 
 
 def ComputeTraining(trainingDf,forwardwindow):
@@ -75,7 +64,7 @@ def ComputeTraining(trainingDf,forwardwindow):
     return X_train,Y_train,X_test,Y_test
 
 def ModelComputation():
-    workkk = pd.read_csv("MLset.csv")
+    workkk = pd.read_csv("ML csv/MLset.csv")
 
     X = workkk.drop(columns=["y"])
     y = workkk["y"]
@@ -140,7 +129,6 @@ def ModelComputation():
         recall_score,
         f1_score,
         roc_auc_score,
-        confusion_matrix,
         classification_report
     )
 
@@ -170,10 +158,6 @@ def ModelComputation():
 
     print("Precision@4:", precision_top4)
 
-
-
-import numpy as np
-import pandas as pd
 import tqdm
 
 def computeBBasicMomentum_vectorized_prices(trainingDf, forwardwindow, start=181, out_csv="verifff.csv"):
@@ -229,7 +213,163 @@ def quick_hit_rate(path="verifff.csv"):
     print(f"Pred=1: {n_pred_1} | Hits: {n_hit} | Hit rate: {hit_rate:.4%}")
     return hit_rate
 
-quick_hit_rate()
+
+
+from Boring import *
+
+
+
+def compute_y(trainingDf, date, forward_window, top_k=4):
+    future_date = trainingDf.iloc[
+        trainingDf.index[trainingDf["Date"] == date][0] + forward_window
+    ]["Date"]
+
+    ranking = []
+    for asset in trainingDf.columns[2:]:
+        ret_fwd = aa(trainingDf, future_date, forward_window, asset)
+        ranking.append((ret_fwd, asset))
+
+    ranking.sort(reverse=True)
+    top_assets = {a for _, a in ranking[:top_k]}
+
+    y = []
+    for asset in trainingDf.columns[2:]:
+        y.append(1 if asset in top_assets else 0)
+
+    return np.array(y)
+
+def computeFeaturesatDate(trainingDf, currentDate):
+    cols = ["Date", "Ticker", "ret_5d", "ret_10d", "ret_21d", "ret_63d", "zscore"]
+    working_df = pd.DataFrame(columns=cols)
+
+    for asset in trainingDf.columns[2:]:
+        working_row = []
+        currentTicker = asset
+        ret_5d = aa(trainingDf, currentDate, 5, asset)
+        ret_10d = aa(trainingDf, currentDate, 10, asset)
+        ret_21d = aa(trainingDf, currentDate, 21, asset)
+        ret_63d = aa(trainingDf, currentDate, 63, asset)
+        tempo = GetWhatToBuy(trainingDf, currentDate, 12, asset)
+
+        alpha = tempo[0]
+        beta = tempo[1]
+        zscore = tempo[2]
+
+        working_row.append({
+            "Date": currentDate,
+            "Ticker": currentTicker,
+            "ret_5d": ret_5d,
+            "ret_10d": ret_10d,
+            "ret_21d": ret_21d,
+            "ret_63d": ret_63d,
+            "alpha": alpha,
+            "beta": beta,
+            "zscore": zscore,
+        })
+
+        working_df.loc[len(working_df)] = working_row[0]
+
+    return working_df
+
+def Coldtraining(trainingDf, burnin_dates, forward_window):
+    first = True
+
+    for date in burnin_dates:
+        df_feat = computeFeaturesatDate(trainingDf, date)
+        X = df_feat.drop(columns=["Date", "Ticker"])
+        y = compute_y(trainingDf, date, forward_window)
+
+        if first:
+            model.partial_fit(X, y, classes=[0, 1])
+            first = False
+        else:
+            model.partial_fit(X, y)
+
+
+
+
+
+from sklearn.linear_model import SGDClassifier
+model = SGDClassifier(
+        loss="log_loss",
+        penalty="l2",
+        alpha=1e-4,
+        random_state=42
+    )
+buffer_X = {}
+
+def getviewsfromml(trainingDf, currentDate, forward_window):
+    """
+    1) prédire à currentDate
+    2) retourner les probas (pour BL)
+    3) entraîner le modèle si le label passé est dispo
+    """
+
+    df_feat = computeFeaturesatDate(trainingDf, currentDate)
+    X = df_feat.drop(columns=["Date", "Ticker"])
+
+    proba = model.predict_proba(X)[:, 1]
+    buffer_X[currentDate] = X.copy()
+
+    idx = trainingDf.index[trainingDf["Date"] == currentDate][0]
+    past_idx = idx - forward_window
+
+    if past_idx >= 0:
+        past_date = trainingDf.iloc[past_idx]["Date"]
+
+        if past_date in buffer_X:
+            X_past = buffer_X[past_date]
+            y_past = compute_y(trainingDf, past_date, forward_window)
+
+            model.partial_fit(X_past, y_past)
+
+    # ---- SORTIE POUR BL ----
+    out = df_feat[["Ticker"]].copy()
+    out["proba_ml"] = proba
+
+    return out
+
+
+
+def BlackAndLittermanML(backtestStartDate, rebalancingFrequency, lookbackPeriod, df, RfDf, confidence, proportion, tau, Lambda,):
+
+    #COMPUTATION OF SIGMA
+    Sigma = get_shrunk_covariance(df, backtestStartDate, lookback=60)  # using 720 days to have better sigma of 2 years
+    # Sigma=getSigmaModified(df,backtestStartDate,lookback=60,listofbanneddays=listofbanneddays) #using 720 days to have better sigma of 2 years
+
+
+    #Compute the views from the ML model
+    viewtandproba=getviewsfromml(df, backtestStartDate, rebalancingFrequency)
+
+
+
+
+
+
+    """
+    Omega=GetOmega(PMatrix, Sigma, c=confidence)
+    rf=GetRiskFree(df,backtestStartDate,lookbackPeriod,RfDf)
+    weights = GetWeight(df, backtestStartDate)
+    weights = np.array(weights).reshape(-1, 1)
+
+    Lambda=3
+    LambdaMarkowitz=3
+
+    uimplied = Lambda * (Sigma @ weights) + rf
+    #BL formula
+    #tau=OmegaLinked
+    StackLambda.append(Lambda)
+    datesss2.append(backtestStartDate)
+    optimizedReturn=(np.linalg.inv(np.linalg.inv(tau*Sigma)+np.transpose(PMatrix)@np.linalg.inv(Omega)@PMatrix)) @ (np.linalg.inv(tau*Sigma)@uimplied+np.transpose(PMatrix)@np.linalg.inv(Omega)@Q)
+
+
+    #MarkowitzAllocation
+    WeightBL=np.linalg.inv(Sigma)@(optimizedReturn-rf)/LambdaMarkowitz
+    WeightRF=1-np.sum(WeightBL)
+    
+    return WeightBL,WeightRf"""
+
+    return 0,0
 
 
 
@@ -239,9 +379,10 @@ quick_hit_rate()
 
 
 
-computeBBasicMomentum_vectorized_prices(getProperDf(),21)
 
 
+
+# Get BL inputs
 
 
 
