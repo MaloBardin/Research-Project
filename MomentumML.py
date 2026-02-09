@@ -1,7 +1,9 @@
 from Residual import GetWhatToBuy
 from Returns import aa
+from Boring import *
+import tqdm
 
-
+#OTHER CODE
 def ComputeTraining(trainingDf,forwardwindow):
     X_train=0
     Y_train=[]
@@ -62,7 +64,6 @@ def ComputeTraining(trainingDf,forwardwindow):
     Y_test=Y_train[80000:]
     working_df.to_csv("MLset.csv",index=False)
     return X_train,Y_train,X_test,Y_test
-
 def ModelComputation():
     workkk = pd.read_csv("ML csv/MLset.csv")
 
@@ -157,9 +158,6 @@ def ModelComputation():
     )
 
     print("Precision@4:", precision_top4)
-
-import tqdm
-
 def computeBBasicMomentum_vectorized_prices(trainingDf, forwardwindow, start=181, out_csv="verifff.csv"):
     assets = list(trainingDf.columns[2:])
     dates = trainingDf["Date"].to_numpy()
@@ -197,7 +195,6 @@ def computeBBasicMomentum_vectorized_prices(trainingDf, forwardwindow, start=181
 
     out.to_csv("eee", index=False)
     return out
-
 def quick_hit_rate(path="verifff.csv"):
     df = pd.read_csv(path)
 
@@ -212,10 +209,6 @@ def quick_hit_rate(path="verifff.csv"):
 
     print(f"Pred=1: {n_pred_1} | Hits: {n_hit} | Hit rate: {hit_rate:.4%}")
     return hit_rate
-
-
-
-from Boring import *
 
 
 
@@ -239,25 +232,20 @@ def compute_y(trainingDf, date, forward_window, top_k=4):
     return np.array(y)
 
 def computeFeaturesatDate(trainingDf, currentDate):
-    cols = ["Date", "Ticker", "ret_5d", "ret_10d", "ret_21d", "ret_63d", "zscore"]
-    working_df = pd.DataFrame(columns=cols)
+    assets = trainingDf.columns[2:]
 
-    for asset in trainingDf.columns[2:]:
-        working_row = []
-        currentTicker = asset
+    rows = []
+    for asset in assets:
         ret_5d = aa(trainingDf, currentDate, 5, asset)
         ret_10d = aa(trainingDf, currentDate, 10, asset)
         ret_21d = aa(trainingDf, currentDate, 21, asset)
         ret_63d = aa(trainingDf, currentDate, 63, asset)
-        tempo = GetWhatToBuy(trainingDf, currentDate, 12, asset)
 
-        alpha = tempo[0]
-        beta = tempo[1]
-        zscore = tempo[2]
+        alpha, beta, zscore = GetWhatToBuy(trainingDf, currentDate, 12, asset)
 
-        working_row.append({
+        rows.append({
             "Date": currentDate,
-            "Ticker": currentTicker,
+            "Ticker": asset,
             "ret_5d": ret_5d,
             "ret_10d": ret_10d,
             "ret_21d": ret_21d,
@@ -267,9 +255,7 @@ def computeFeaturesatDate(trainingDf, currentDate):
             "zscore": zscore,
         })
 
-        working_df.loc[len(working_df)] = working_row[0]
-
-    return working_df
+    return pd.DataFrame(rows)
 
 def Coldtraining(trainingDf, burnin_dates, forward_window):
     first = True
@@ -287,7 +273,7 @@ def Coldtraining(trainingDf, burnin_dates, forward_window):
 
 
 
-
+#MODEL
 
 from sklearn.linear_model import SGDClassifier
 model = SGDClassifier(
@@ -296,6 +282,7 @@ model = SGDClassifier(
         alpha=1e-4,
         random_state=42
     )
+
 buffer_X = {}
 
 def getviewsfromml(trainingDf, currentDate, forward_window):
@@ -304,6 +291,8 @@ def getviewsfromml(trainingDf, currentDate, forward_window):
     2) retourner les probas (pour BL)
     3) entraîner le modèle si le label passé est dispo
     """
+
+    print(f"ML prediction for {currentDate}")
 
     df_feat = computeFeaturesatDate(trainingDf, currentDate)
     X = df_feat.drop(columns=["Date", "Ticker"])
@@ -326,23 +315,85 @@ def getviewsfromml(trainingDf, currentDate, forward_window):
     # ---- SORTIE POUR BL ----
     out = df_feat[["Ticker"]].copy()
     out["proba_ml"] = proba
-
+    print("done ML prediction")
     return out
 
 
 
+#logique BL
 def BlackAndLittermanML(backtestStartDate, rebalancingFrequency, lookbackPeriod, df, RfDf, confidence, proportion, tau, Lambda,):
 
     #COMPUTATION OF SIGMA
-    Sigma = get_shrunk_covariance(df, backtestStartDate, lookback=60)  # using 720 days to have better sigma of 2 years
-    # Sigma=getSigmaModified(df,backtestStartDate,lookback=60,listofbanneddays=listofbanneddays) #using 720 days to have better sigma of 2 years
+    Sigma = get_shrunk_covariance(df, backtestStartDate, lookback=60)
 
 
     #Compute the views from the ML model
     viewtandproba=getviewsfromml(df, backtestStartDate, rebalancingFrequency)
 
+    #SEUIL PROBA SELECTION VIEWS
+    seuilproba=0.2
+    print("Viewtandproba : ", viewtandproba)
+    holderBestViews=viewtandproba[viewtandproba["proba_ml"]>seuilproba]
+
+    #CREATION OF P Q OMEGA MATRICES
+    if holderBestViews.shape[0]>0:
+        #P Matrix
+        print("ALERTE VIEWS FROM ML, BL ACTIVATED")
+        PMatrix=np.zeros((holderBestViews.shape[0],Sigma.shape[0]))
+
+        for views in range(holderBestViews.shape[0]):
+            for i in range(Sigma.shape[0]):
+                PMatrix[views,i]=-1/ Sigma.shape[0]
+            PMatrix[views,Sigma.columns.get_loc(holderBestViews.iloc[views,0])]=1-1/Sigma.shape[0]
+        #Q Matrix
+        lookback=21
+        Q=np.zeros((holderBestViews.shape[0],1))
+        date = backtestStartDate
+        endDateIndex = df.index[df["Date"] == pd.to_datetime(date)][0]
+        startDateIndex = df.index[df["Date"] == pd.to_datetime(date)][0] - lookback
+        dailyperf_market = (float(df.iloc[endDateIndex, 1]) / float(df.iloc[startDateIndex, 1])) ** (1 / lookback) - 1
+
+        for views in range(Q.shape[0]):
+            returnsofviews=(float(df.iloc[endDateIndex, df.columns.get_loc(holderBestViews.iloc[views,0])]) / float(df.iloc[startDateIndex, df.columns.get_loc(holderBestViews.iloc[views,0])])) ** (1/lookback) - 1
+            Q[views,0]=returnsofviews-dailyperf_market
 
 
+        #Omega Matrix with adaptible confidence
+        print("HolderBestViews : ", holderBestViews)
+        factorC = (1/0.75)-1
+        Omega=factorC@PMatrix@Sigma@np.transpose(PMatrix)
+
+        print("P Matrix : ", PMatrix)
+        print("Q Matrix : ", Q)
+        print("Omega Matrix : ", Omega)
+    else :
+        print("ALERTE NO VIEWS FROM ML, BL DEGRADE TO MARKOWITZ")
+
+        PMatrix=np.zeros((1,Sigma.shape[0]))
+        Q=np.zeros((1,1))
+        Omega=np.zeros((1,1))
+
+    #Risk free and weights computation
+    rf=GetRiskFree(df,backtestStartDate,lookbackPeriod,RfDf)
+    weights = GetWeight(df, backtestStartDate)
+    weights = np.array(weights).reshape(-1, 1)
+
+    #Lambda
+    Lambda=3
+    LambdaMarkowitz=3
+
+    #Master Formula
+    uimplied = Lambda * (Sigma @ weights) + rf
+    if holderBestViews.shape[0]>0:
+        optimizedReturn=(np.linalg.inv(np.linalg.inv(tau*Sigma)+np.transpose(PMatrix)@np.linalg.inv(Omega)@PMatrix)) @ (np.linalg.inv(tau*Sigma)@uimplied+np.transpose(PMatrix)@np.linalg.inv(Omega)@Q)
+    else :
+        optimizedReturn=uimplied
+
+    #MarkowitzAllocation
+    WeightBL=np.linalg.inv(Sigma)@(optimizedReturn-rf)/LambdaMarkowitz
+    WeightRF=1-np.sum(WeightBL)
+
+    return WeightBL,WeightRF
 
 
 
@@ -370,11 +421,6 @@ def BlackAndLittermanML(backtestStartDate, rebalancingFrequency, lookbackPeriod,
     return WeightBL,WeightRf"""
 
     return 0,0
-
-
-
-
-
 
 
 
