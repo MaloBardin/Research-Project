@@ -92,7 +92,8 @@ def ComputingTheBackTest(df):
         StockQty.loc[start, "Money"] = MoneyAtStart
         StockQty.loc[start, "SPX"] = df.iloc[start, 1]
         StockQty.loc[start, "Date"] = df.iloc[start, 0]
-        FirstTime=True
+
+
         for i in tqdm(range(start, df.shape[0]), desc="Backtesting"):
             StockQty.iloc[i, 0] = df.iloc[i, 0]
             StockQty.iloc[i, 1] = df.iloc[i, 1]
@@ -108,21 +109,10 @@ def ComputingTheBackTest(df):
 
             StockQty.iloc[i, -1] = CurrentValue
 
-
-            if i>=df.shape[0]/2 and FirstTime==True:
-                print("Cold training")
-                FirstTime=False
-                mymodel=Coldtraining(df, datesHolder, hold*21)
-                print("Cold training done")
-
             if interspaced > 21 * hold or i == start:
                 interspaced = 0
 
-                if i >= df.shape[0] / 2 and FirstTime == False :
-                    BLWeight, RiskFreeAmount=BlackAndLittermanML(str(df.iloc[i,0]),21*hold,6*22,df_toBL,RfDf,confidence=confidence2,proportion=proportion2,tau=tau2,Lambda=Lambda2)
-                else :
-                    BLWeight,RiskFreeAmount,historical_returns=BlackAndLittermanModel(str(df.iloc[i,0]),21*hold,6*22,df_toBL,RfDf,confidence=confidence2,proportion=proportion2,tau=tau2,Lambda=Lambda2,historical_returns=historical_returns,modifiedlambda=modifiedlambda)
-
+                BLWeight,RiskFreeAmount,historical_returns=BlackAndLittermanModel(str(df.iloc[i,0]),21*hold,6*21,df_toBL,RfDf,confidence=confidence2,proportion=proportion2,tau=tau2,Lambda=Lambda2,historical_returns=historical_returns,modifiedlambda=modifiedlambda)
 
                 for index in range(len(BLWeight)):
                     StockQty.iloc[i, index + 2] = (BLWeight.iloc[index, 0] * CurrentValue) / df.iloc[i, index + 2]
@@ -137,11 +127,11 @@ def ComputingTheBackTest(df):
 
     RfDf = GetRfDataframe(df)
     final = Backtester(dfbacktest, hold=hold, hist=hist, proportion=proportion, df_toBL=df, RfDf=RfDf,
-                       confidence2=confidence, proportion2=proportion, tau2=tau, Lambda2=Lambda, start=181,
+                       confidence2=confidence, proportion2=proportion, tau2=tau, Lambda2=Lambda, start=180,
                        modifiedlambda=True)
 
     console.print("\n[green]✅ Backtest terminé avec succès ![/green]\n")
     return final
 
-
+#%%
 Visualisation(ComputingTheBackTest(GetProperDF()))
